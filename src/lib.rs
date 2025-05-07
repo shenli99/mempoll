@@ -1,6 +1,5 @@
 pub mod process;
 pub mod memory;
-pub mod error;
 
 /*
 /// 读取进程的内存
