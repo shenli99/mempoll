@@ -1,27 +1,48 @@
+use std::fs::File;
+
+use crate::process::Process;
+
 use super::{MemoryError, MemoryReader, MemoryWriter};
 
 pub struct ProcessVmMemory {
-    pid: u32,
+    process: Process,
+    file: Option<File>
 }
 
 impl ProcessVmMemory {
     pub fn new(pid: u32) -> Self {
-        ProcessVmMemory { pid }
+        ProcessVmMemory {
+            process: Process::new(pid),
+            file: None
+        }
+    }
+
+    pub fn open(&mut self) -> Result<(), MemoryError> {
+        if self.file.is_none() {
+            let path = format!("/proc/{}/mem", self.process.pid);
+            self.file = Some(File::open(path).map_err(|e| MemoryError::ProcMemError(e.to_string()))?)
+        }
+
+        Ok(())
     }
 }
 
 impl MemoryReader for ProcessVmMemory {
-    fn read(&self, address: u64, length: usize) -> Result<Vec<u8>, MemoryError> {
-        // 使用 `process_vm_readv` 系统调用来读取内存
-        // 这里的实现需要通过 libc 调用进行封装，具体可参考相关文档或代码示例
+    fn read<T: Sized + Copy>(&self, address: usize) -> Result<T, MemoryError> {
+        unimplemented!()
+    }
+
+    fn readbuf(&self, address: usize, buf: &mut [u8]) -> Result<usize, MemoryError> {
         unimplemented!()
     }
 }
 
 impl MemoryWriter for ProcessVmMemory {
-    fn write(&self, address: u64, data: &[u8]) -> Result<(), MemoryError> {
-        // 使用 `process_vm_writev` 系统调用来写入内存
-        // 这里的实现需要通过 libc 调用进行封装，具体可参考相关文档或代码示例
+    fn write<T: Sized + Copy>(&self, address: usize, value: &T) -> Result<(), MemoryError> {
+        unimplemented!()
+    }
+
+    fn writebuf(&self, address: usize, buf: &[u8]) -> Result<usize, MemoryError> {
         unimplemented!()
     }
 }

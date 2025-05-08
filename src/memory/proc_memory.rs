@@ -1,7 +1,8 @@
 use crate::process::Process;
-use std::fs::File;
-use std::io::{Read, Seek, Write};
-use super::{MemoryError, MemoryReader, MemoryWriter};
+use std::io::IoSlice;
+use std::{fs::File, io::IoSliceMut};
+use std::mem::MaybeUninit;
+use super::{MemoryError, MemoryReader, MemorySearcher, MemoryWriter};
 
 pub struct ProcMemory {
     process: Process,
@@ -27,30 +28,79 @@ impl ProcMemory {
 }
 
 impl MemoryReader for ProcMemory {
-    fn read(&self, address: u64, length: usize) -> Result<Vec<u8>, MemoryError> {
+    fn read<T: Sized + Copy>(&self, address: usize) -> Result<T, MemoryError> {
         match self.file {
             Some(_) => {
-                let mut file = self.file.as_ref().unwrap();
-                let mut buffer = vec![0u8; length];
-                file.seek(std::io::SeekFrom::Start(address)).map_err(|e| MemoryError::ProcReadError(e.to_string()))?;
-                file.read_exact(&mut buffer).map_err(|e| MemoryError::ProcReadError(e.to_string()))?;
-                Ok(buffer)
-            }
-            None => Err(MemoryError::ProcUninitError("uninit file".to_string()))
+                let fd = self.file.as_ref().unwrap();
+                let mut res = MaybeUninit::<T>::uninit();
+                let size = std::mem::size_of::<T>();
+
+                let len = nix::sys::uio::pread(fd, unsafe {
+                    std::slice::from_raw_parts_mut(res.as_mut_ptr() as *mut u8, size)
+                }, address as i64).map_err(|e|MemoryError::PreadError(e.to_string()))?;
+
+                if len != size {
+                    Err(MemoryError::ProcReadError("Short pread".to_string()))
+                } else {
+                    Ok(unsafe {
+                        res.assume_init()
+                    })
+                }
+            },
+            None => Err(MemoryError::ProcUninitError("Uninit file".to_string()))
+        }
+    }
+
+    fn readbuf(&self, address: usize, buf: &mut [u8]) -> Result<usize, MemoryError> {
+        match self.file {
+            Some(_) => {
+                let fd = self.file.as_ref().unwrap();
+                let mut bufs = [ IoSliceMut::new(buf) ];
+                nix::sys::uio::preadv(fd, &mut bufs, address as i64).map_err(|e|MemoryError::PreadError(e.to_string()))
+            },
+            None => Err(MemoryError::ProcUninitError("Uninit file".to_string()))
         }
     }
 }
 
 impl MemoryWriter for ProcMemory {
-    fn write(&self, address: u64, data: &[u8]) -> Result<(), MemoryError> {
+    fn write<T: Sized>(&self, address: usize, value: &T) -> Result<(), MemoryError> {
         match self.file {
             Some(_) => {
-                let mut file = self.file.as_ref().unwrap();
-                file.seek(std::io::SeekFrom::Start(address)).map_err(|e| MemoryError::ProcReadError(e.to_string()))?;
-                file.write_all(data).map_err(|e| MemoryError::ProcReadError(e.to_string()))?;
-                Ok(())
-            }
-            None => Err(MemoryError::ProcUninitError("uninit file".to_string()))
+                let fd = self.file.as_ref().unwrap();
+                let size = std::mem::size_of::<T>();
+                let buf = unsafe {
+                    std::slice::from_raw_parts(value as *const T as *const u8, size)
+                };
+
+                let len = nix::sys::uio::pwrite(fd, buf, address as i64).map_err(|e|MemoryError::PwriteError(e.to_string()))?;
+
+                if len != size {
+                    Err(MemoryError::ProcWriteError("Short pwrite".to_string()))
+                } else {
+                    Ok(())
+                }
+            },
+            None => Err(MemoryError::ProcUninitError("Uninit file".to_string()))
         }
+    }
+
+    fn writebuf(&self, address: usize, buf: &[u8]) -> Result<usize, MemoryError> {
+        match self.file {
+            Some(_) => {
+                let fd = self.file.as_ref().unwrap();
+                let bufs = [ IoSlice::new(buf) ];
+                nix::sys::uio::pwritev(fd, &bufs, address as i64).map_err(|e|MemoryError::PreadError(e.to_string()))
+            },
+            None => Err(MemoryError::ProcUninitError("Uninit file".to_string()))
+        }
+    }
+}
+
+impl MemorySearcher for ProcMemory {
+    fn search<T: Eq + Sized , const N: usize>(&self, rule: super::SearchRule<T>) -> Result<Option<usize>, MemoryError> {
+        let mut buff = Box::new([0u8;N]);
+        let res = Vec::<usize>::new();
+        todo!()
     }
 }
