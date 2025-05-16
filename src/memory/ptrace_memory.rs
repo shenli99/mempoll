@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use nix::sys;
+use nix::{libc, sys};
 use nix::unistd::Pid;
 use crate::process::Process;
 
@@ -54,7 +54,7 @@ impl MemoryReader for PtraceMemory {
 
         while offset < size {
             let curr_addr = address + offset;
-            let aligned_addr = curr_addr + (curr_addr % word_size);
+            let aligned_addr = curr_addr - (curr_addr % word_size);
             let offset1 = curr_addr % word_size;
             let word = sys::ptrace::read(pid, (aligned_addr) as sys::ptrace::AddressType)
                 .map_err(|e|MemoryError::PtraceReadError(e.to_string()))?;
@@ -83,10 +83,13 @@ impl MemoryReader for PtraceMemory {
                 offset += bytes_to_copy;
             }
         }
-
-        Ok(unsafe {
-            res.assume_init()
-        })
+        if offset == size {
+            Ok(unsafe {
+                res.assume_init()
+            })
+        }else{
+            Err(MemoryError::ProcReadError(format!("Short read, result: {offset}").to_string()))
+        }
     }
 
     fn readbuf(&self, address: usize, buf: &mut [u8]) -> Result<usize, MemoryError> {
@@ -122,7 +125,11 @@ impl MemoryReader for PtraceMemory {
             }
         }
 
-        Ok(buff_offset)
+        if buff_offset == buf.len() {
+            Ok(buff_offset)
+        }else{
+            Err(MemoryError::ProcReadError(format!("Short read, result: {buff_offset}").to_string()))
+        }
     }
 }
 
@@ -181,7 +188,7 @@ impl MemoryWriter for PtraceMemory {
         if offset == size {
             Ok(())
         } else {
-            Err(MemoryError::PtraceWriteError("Short written".to_string()))
+            Err(MemoryError::PtraceWriteError(format!("Short written, result: {offset}").to_string()))
         }
     }
 
@@ -239,7 +246,7 @@ impl MemoryWriter for PtraceMemory {
         if offset == size {
             Ok(offset)
         } else {
-            Err(MemoryError::PtraceWriteError("Short written".to_string()))
+            Err(MemoryError::PtraceWriteError(format!("Short written, result: {offset}").to_string()))
         }
     }
 }

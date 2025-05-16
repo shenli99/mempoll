@@ -30,11 +30,11 @@ impl MemoryReader for ProcessVmMemory {
             len: size
         } ];
 
-        let len = process_vm_readv(Pid::from_raw(self.process.pid as i32), local_iov.as_mut_slice(), remote_iov.as_slice())
+        let len = process_vm_readv(Pid::from_raw(self.process.pid as i32), &mut local_iov, &remote_iov)
             .map_err(|e|MemoryError::ProcessVmReadError(e.to_string()))?;
 
         if len == 0 {
-            Err(MemoryError::ProcessVmError("result: {len}".to_string()))
+            Err(MemoryError::ProcessVmError(format!("result: {len}").to_string()))
         }else if len != size {
             Err(MemoryError::ProcessVmReadError("Short read".to_string()))
         }else{
@@ -52,11 +52,11 @@ impl MemoryReader for ProcessVmMemory {
             len: size
         }];
 
-        let len = process_vm_readv(Pid::from_raw(self.process.pid as i32), local_iov.as_mut_slice(), remote_iov.as_slice())
+        let len = process_vm_readv(Pid::from_raw(self.process.pid as i32), &mut local_iov, &remote_iov)
             .map_err(|e|MemoryError::ProcessVmReadError(e.to_string()))?;
 
         if len == 0 {
-            Err(MemoryError::ProcessVmError("result: {len}".to_string()))
+            Err(MemoryError::ProcessVmError(format!("result: {len}").to_string()))
         }else if size != len {
             Err(MemoryError::ProcessVmReadError("Short read".to_string()))
         }else{
@@ -76,11 +76,11 @@ impl MemoryWriter for ProcessVmMemory {
             len: size
         } ];
 
-        let len = process_vm_writev(Pid::from_raw(self.process.pid as i32), local_iov.as_slice(), remote_iov.as_slice())
+        let len = process_vm_writev(Pid::from_raw(self.process.pid as i32), &local_iov, &remote_iov)
             .map_err(|e|MemoryError::ProcessVmWriteError(e.to_string()))?;
 
         if len == 0 {
-            Err(MemoryError::ProcessVmError("result: {len}".to_string()))
+            Err(MemoryError::ProcessVmError(format!("result: {len}").to_string()))
         }else if len != size {
             Err(MemoryError::ProcessVmWriteError("Short written".to_string()))
         }else{
@@ -96,11 +96,11 @@ impl MemoryWriter for ProcessVmMemory {
             len: size
         }];
 
-        let len = process_vm_writev(Pid::from_raw(self.process.pid as i32), local_iov.as_slice(), remote_iov.as_slice())
+        let len = process_vm_writev(Pid::from_raw(self.process.pid as i32), &local_iov, &remote_iov)
             .map_err(|e|MemoryError::ProcessVmWriteError(e.to_string()))?;
 
         if len == 0 {
-            Err(MemoryError::ProcessVmError("result: {len}".to_string()))
+            Err(MemoryError::ProcessVmError(format!("result: {len}").to_string()))
         }else if len != size {
             Err(MemoryError::ProcessVmWriteError("Short written".to_string()))
         }else{

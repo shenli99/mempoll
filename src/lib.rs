@@ -1,5 +1,8 @@
+#![feature(portable_simd)]
+
 pub mod process;
 pub mod memory;
+pub mod searcher;
 
 /*
 /// 读取进程的内存

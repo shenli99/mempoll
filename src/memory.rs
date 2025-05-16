@@ -12,26 +12,6 @@ pub trait MemoryWriter {
     fn writebuf(&self, address: usize, buf: &[u8]) -> Result<usize, MemoryError>;
 }
 
-pub trait MemorySearcher: MemoryReader {
-    fn search<T: Eq + Sized, const N: usize>(&self, rule: SearchRule<T>) -> Result<Option<usize>, MemoryError>;
-}
-
-#[derive(Debug)]
-pub enum SearchRule<T: Eq + Sized> {
-    ///Eq(a) equal to a ==
-    Eq(T),
-    //Ge(a) equal to a <=
-    Ge(T),
-    //Le(a) equal to a >= 
-    Le(T),
-    //Bte(a, b) equal to [a, b]
-    Bte(T, T),
-    //Bter(a, b) equal to [a, b)
-    Bter(T, T),
-    //Btel(a, b) equal to (a, b]
-    Btel(T, T)
-}
-
 #[derive(Debug)]
 pub enum MemoryError {
     IoError(String),

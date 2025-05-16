@@ -1,8 +1,9 @@
 use crate::process::Process;
+use crate::searcher::{MemorySearcher, SearchError, SearchRule};
 use std::io::IoSlice;
 use std::{fs::File, io::IoSliceMut};
 use std::mem::MaybeUninit;
-use super::{MemoryError, MemoryReader, MemorySearcher, MemoryWriter};
+use super::{MemoryError, MemoryReader, MemoryWriter};
 
 pub struct ProcMemory {
     process: Process,
@@ -40,7 +41,7 @@ impl MemoryReader for ProcMemory {
                 }, address as i64).map_err(|e|MemoryError::PreadError(e.to_string()))?;
 
                 if len != size {
-                    Err(MemoryError::ProcReadError("Short pread".to_string()))
+                    Err(MemoryError::ProcReadError(format!("Short pread, result: {len}").to_string()))
                 } else {
                     Ok(unsafe {
                         res.assume_init()
@@ -56,7 +57,14 @@ impl MemoryReader for ProcMemory {
             Some(_) => {
                 let fd = self.file.as_ref().unwrap();
                 let mut bufs = [ IoSliceMut::new(buf) ];
-                nix::sys::uio::preadv(fd, &mut bufs, address as i64).map_err(|e|MemoryError::PreadError(e.to_string()))
+
+                let len = nix::sys::uio::preadv(fd, &mut bufs, address as i64).map_err(|e|MemoryError::PreadError(e.to_string()))?;
+
+                if len != buf.len() {
+                    Err(MemoryError::ProcReadError(format!("Short read, result: {len}").to_string()))
+                }else{
+                    Ok(len)
+                }
             },
             None => Err(MemoryError::ProcUninitError("Uninit file".to_string()))
         }
@@ -69,11 +77,10 @@ impl MemoryWriter for ProcMemory {
             Some(_) => {
                 let fd = self.file.as_ref().unwrap();
                 let size = std::mem::size_of::<T>();
-                let buf = unsafe {
-                    std::slice::from_raw_parts(value as *const T as *const u8, size)
-                };
 
-                let len = nix::sys::uio::pwrite(fd, buf, address as i64).map_err(|e|MemoryError::PwriteError(e.to_string()))?;
+                let len = nix::sys::uio::pwrite(fd, unsafe {
+                    std::slice::from_raw_parts(value as *const T as *const u8, size)
+                }, address as i64).map_err(|e|MemoryError::PwriteError(e.to_string()))?;
 
                 if len != size {
                     Err(MemoryError::ProcWriteError("Short pwrite".to_string()))
@@ -97,10 +104,10 @@ impl MemoryWriter for ProcMemory {
     }
 }
 
-impl MemorySearcher for ProcMemory {
-    fn search<T: Eq + Sized , const N: usize>(&self, rule: super::SearchRule<T>) -> Result<Option<usize>, MemoryError> {
-        let mut buff = Box::new([0u8;N]);
-        let res = Vec::<usize>::new();
-        todo!()
-    }
-}
+// impl MemorySearcher for ProcMemory {
+//     fn search<T: Eq + Sized , const N: usize>(&self, rule: SearchRule<T>) -> Result<Vec<usize>, SearchError> {
+//         let mut buff = Box::new([0u8;N]);
+//         let res = Vec::<usize>::new();
+//         todo!()
+//     }
+// }
