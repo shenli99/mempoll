@@ -1,6 +1,6 @@
 use std::{io::{IoSlice, IoSliceMut}, mem::{size_of, MaybeUninit}};
 use nix::{sys::uio::{process_vm_readv, process_vm_writev, RemoteIoVec, }, unistd::Pid};
-use crate::process::Process;
+use crate::{process::{MapRange, Process}, searcher::{MemorySearcher, SearchError, SearchRule}};
 
 use super::{MemoryError, MemoryReader, MemoryWriter};
 
@@ -106,5 +106,45 @@ impl MemoryWriter for ProcessVmMemory {
         }else{
             Ok(size)
         }
+    }
+}
+
+impl MemorySearcher for ProcessVmMemory {
+    fn search<T: SearchRule, const N: usize>(&self, rule: T, filter: Option<impl Fn(&MapRange) -> bool>) -> Result<Vec<usize>, SearchError>
+    {
+        let mut buff = Box::new([0u8;N]);
+        let mut res = Vec::<usize>::new();
+        match filter {
+            Some(f) => {
+                for i in 0..self.process.maps.len() {
+                    if f(&self.process.maps[i]) {
+                        let addr = self.process.maps[i].address;
+                        let len = addr.1 - addr.0 + 1;
+                        let mut offset = 0;
+                        while offset < len {
+                            let read_bytes = self.readbuf(addr.0 + offset, buff.as_mut_slice())
+                                .map_err(|e|SearchError::ReadError(e.to_string()))?;
+                            offset += read_bytes;
+                            res.extend(rule.search(buff.as_slice(), read_bytes));
+                        }
+                    }
+                }
+            },
+            None => {
+                for i in 0..self.process.maps.len() {
+                    let addr = self.process.maps[i].address;
+                    let len = addr.1 - addr.0 + 1;
+                    let mut offset = 0;
+                    while offset < len {
+                        let read_bytes = self.readbuf(addr.0 + offset, buff.as_mut_slice())
+                            .map_err(|e|SearchError::ReadError(e.to_string()))?;
+                        offset += read_bytes;
+                        res.extend(rule.search(buff.as_slice(), read_bytes));
+                    }
+                }
+            }
+        }
+
+        Ok(res)
     }
 }

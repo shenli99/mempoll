@@ -1,12 +1,13 @@
-use crate::process::Process;
+use crate::process::{MapRange, Process};
 use crate::searcher::{MemorySearcher, SearchError, SearchRule};
 use std::io::IoSlice;
+use std::os::fd::AsFd;
 use std::{fs::File, io::IoSliceMut};
 use std::mem::MaybeUninit;
 use super::{MemoryError, MemoryReader, MemoryWriter};
 
 pub struct ProcMemory {
-    process: Process,
+    pub process: Process,
     file: Option<File>
 }
 
@@ -57,10 +58,9 @@ impl MemoryReader for ProcMemory {
             Some(_) => {
                 let fd = self.file.as_ref().unwrap();
                 let mut bufs = [ IoSliceMut::new(buf) ];
+                let len = nix::sys::uio::preadv(fd.as_fd(), bufs.as_mut_slice(), address as i64).unwrap();//.map_err(|e|MemoryError::PreadError(e.to_string()))?;
 
-                let len = nix::sys::uio::preadv(fd, &mut bufs, address as i64).map_err(|e|MemoryError::PreadError(e.to_string()))?;
-
-                if len != buf.len() {
+                if len <= 0 {
                     Err(MemoryError::ProcReadError(format!("Short read, result: {len}").to_string()))
                 }else{
                     Ok(len)
@@ -104,10 +104,40 @@ impl MemoryWriter for ProcMemory {
     }
 }
 
-// impl MemorySearcher for ProcMemory {
-//     fn search<T: Eq + Sized , const N: usize>(&self, rule: SearchRule<T>) -> Result<Vec<usize>, SearchError> {
-//         let mut buff = Box::new([0u8;N]);
-//         let res = Vec::<usize>::new();
-//         todo!()
-//     }
-// }
+impl MemorySearcher for ProcMemory {
+    fn search<T: SearchRule, const N: usize>(&self, rule: T, filter: Option<impl Fn(&MapRange) -> bool>) -> Result<Vec<usize>, SearchError>
+    {
+        let mut buff = Box::new([0u8;N]);
+        let mut res = Vec::<usize>::new();
+        match filter {
+            Some(f) => {
+                for i in 0..self.process.maps.len() {
+                    if f(&self.process.maps[i]) {
+                        let addr = self.process.maps[i].address;
+                        let mut offset = 0;
+                        while offset + addr.0 < addr.1 {
+                            let read_bytes = self.readbuf(addr.0 + offset, buff.as_mut_slice())
+                                .map_err(|e|SearchError::ReadError(e.to_string()))?;
+                            res.extend(rule.search(buff.as_slice(), read_bytes).map(|v|v+addr.0+offset));
+                            offset += read_bytes;
+                        }
+                    }
+                }
+            },
+            None => {
+                for i in 0..self.process.maps.len() {
+                    let addr = self.process.maps[i].address;
+                    let mut offset = 0;
+                    while offset + addr.0 < addr.1 {
+                        let read_bytes = self.readbuf(addr.0 + offset, buff.as_mut_slice())
+                            .map_err(|e|SearchError::ReadError(e.to_string()))?;
+                        res.extend(rule.search(buff.as_slice(), read_bytes).map(|v|v+addr.0+offset));
+                        offset += read_bytes;
+                    }
+                }
+            }
+        }
+
+        Ok(res)
+    }
+}

@@ -1,3 +1,4 @@
+use core::fmt;
 use std::{fmt::Debug, io::{BufRead, BufReader}};
 
 #[derive(Debug)]
@@ -5,6 +6,7 @@ pub enum ProcessError {
     IoError(String),
 
     MapsOpenError(String),
+    MapsReadError(String),
 
     MapParseError,
     MapParseConvertError(String),
@@ -18,31 +20,56 @@ pub mod permissions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MemeryType {
-    Heap,
-    Stack,
-    Vdso,
-    Vvar,
-    Vsyscall,
-    Anonymous,
-    Ashmem(String),
-    MemFd(String),
-    File(String),
-    Other(String)
+pub enum MemoryType {
+    ///Bad
+    Bad,
+    ///Video
+    V,
+    ///C++ alloc
+    Ca,
+    ///C++ .bss
+    Cb,
+    ///C++ .data
+    Cd,
+    ///C++ heap
+    Ch,
+    //Java heap
+    Jh,
+    //Java
+    J,
+    ///Anonymous
+    A,
+    ///Code system
+    Xs,
+    ///Stack
+    S,
+    ///Ashmem
+    As,
+    ///Other
+    Other,
+    ///Code app
+    Xa,
+    ///PPSSPP
+    Ps,
 }
 
 type Permission = u8;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MapRange {
     pub address: (usize, usize),
     perms: Permission,
     pub offset: usize,
-    #[cfg(feature = "detail")]
     pub dev: (u8, u8),
-    #[cfg(feature = "detail")]
-    pub inode: u64,
-    pub pathname: MemeryType,
+    pub inode: u32,
+    pub pathname: String,
+    pub memory_type: MemoryType
+}
+
+impl fmt::Debug for MapRange {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MapRange ( addr: {:X}-{:X}, type:{:?}, pathname:{})", self.address.0, self.address.1, self.memory_type, self.pathname)
+    }
 }
 
 #[derive(Debug)]
@@ -51,26 +78,112 @@ pub struct Process {
     pub maps: Vec<MapRange>
 }
 
-impl MemeryType {
-    pub fn from_str(pathname: Option<&str>) -> Self {
-        match pathname {
-            None => MemeryType::Anonymous,
-            Some(p) if p.starts_with("[stack") => MemeryType::Stack,
-            Some(p) if p == "[heap]" => MemeryType::Heap,
-            Some(p) if p == "[vdso]" => MemeryType::Vdso,
-            Some(p) if p == "[vvar]" => MemeryType::Vvar,
-            Some(p) if p == "[vsyscall]" => MemeryType::Vsyscall,
-            Some(p) if p.starts_with("/dev/ashmem/") => MemeryType::Ashmem(p.to_string()),
-            Some(p) if p.starts_with("/memfd:") => MemeryType::MemFd(p.to_string()),
-            Some(p) if p.starts_with("/") => MemeryType::File(p.to_string()),
-            Some(p) if p.starts_with("[") => MemeryType::Other(p.to_string()),
-            Some(_) => MemeryType::Anonymous,
+impl MemoryType {
+    pub fn new(pathname: Option<&str>, perms: Permission, offset: i64, last_is_cd: bool) -> Self {
+        if perms & permissions::EXECUTABLE != 0 {
+            if let Some(name) = pathname {
+                if name.contains("/data/app")
+                    || name.contains("/data/user") {
+                    return MemoryType::Xa;
+                } else {
+                    return MemoryType::Xs;
+                }
+            } else {
+                return MemoryType::Xa;
+            }
         }
+
+        if let Some(name) = pathname {
+            if name.starts_with("/dev") {
+                if name.starts_with("/dev/mali")
+                    || name.contains("/dev/kgsl")
+                    || name.contains("/dev/nv")
+                    || name.contains("/dev/tegra")
+                    || name.contains("/dev/ion")
+                    || name.contains("/dev/pvr")
+                    || name.contains("/dev/render")
+                    || name.contains("/dev/galcore")
+                    || name.contains("/dev/fimg2d")
+                    || name.contains("/dev/quadd")
+                    || name.contains("/dev/graphics")
+                    || name.contains("/dev/mm_")
+                    || name.contains("/dev/dri/")
+                {
+                    return MemoryType::V;
+                } else if name.contains("/dev/xLog") {
+                    return MemoryType::Bad;
+                }
+            } else if name.starts_with("/system/fonts/")
+                || name.starts_with("anon_inode:dmabuf") {
+                return MemoryType::Bad;
+            } else if name.contains("[anon:.bss]") {
+                return if last_is_cd { MemoryType::Cd } else { MemoryType::Other };
+            } else if name.starts_with("/system/") {
+                return MemoryType::Other;
+            } else if name.contains("/dev/zero/") {
+                return MemoryType::Ca;
+            } else if name.contains("PPSSPP_RAM") {
+                return MemoryType::Ps;
+            } else if !name.contains("system@")
+                && !name.contains("gralloc")
+                && !name.starts_with("[vdso]")
+                && !name.starts_with("[vectors]")
+                && (!name.starts_with("/dev/") || name.starts_with("/dev/ashmem")) {
+                if name.contains("dalvik") {
+                    if (name.contains("exp")
+                        || name.contains("dalvik-alloc")
+                        || name.contains("dalvik-main")
+                        || name.contains("dalvik-large")
+                        || name.contains("dalvik-free"))
+                        && !name.contains("itmap")
+                        && !name.contains("ygote")
+                        && !name.contains("ard")
+                        && !name.contains("jit")
+                        && !name.contains("inear") {
+                        return MemoryType::Jh;
+                    } else {
+                        return MemoryType::J;
+                    }
+                } else if name.contains("/lib") && name.contains(".so") {
+                    if name.contains("/data/") || name.contains("/mnt/") {
+                        return MemoryType::Cd;
+                    }
+                } else if name.contains("malloc") {
+                    return MemoryType::Ca;
+                } else if name.contains("[heap]") {
+                    return MemoryType::Ch;
+                } else if name.contains("[stack") {
+                    return MemoryType::S;
+                } else if name.starts_with("[anon") {
+                    if name.contains("scudo") 
+                        || name.contains("libc_malloc")
+                        || name.contains("bionic_alloc_small_object") {
+                        return MemoryType::Ca;
+                    } else if name.contains("stack") {
+                        return MemoryType::S;
+                    } else if name.contains("ashmem") {
+                        return MemoryType::As;
+                    } else if name.contains("gfx")
+                        || name.contains("gralloc")
+                        || name.contains("dmabuf")
+                        || name.contains("GD") {
+                        return MemoryType::V;
+                    }
+                } else if name.starts_with("/dev/ashmen") && !name.contains("MemoryHeapBase") {
+                    return MemoryType::As;
+                }
+            }
+            return MemoryType::Other;
+        } else if (perms & permissions::READABLE != 0) && (perms & permissions::WRITABLTE != 0) && (perms & permissions::EXECUTABLE == 0) && (offset == 0)
+        {
+            return MemoryType::A;
+        }
+        return MemoryType::Other;
     }
 }
 
 impl MapRange {
-    fn new(s: &str) -> Result<MapRange, ProcessError> {
+    fn new(s: &str, last_is_cd: bool) -> Result<MapRange, ProcessError> {
         let mut parts = s.splitn(6, ' ');
         let addr = parts.next().unwrap().split_once('-').ok_or(ProcessError::MapParseError)?;
         let addr_s = usize::from_str_radix(addr.0, 16).map_err(|e|ProcessError::MapParseConvertError(e.to_string()))?;
@@ -86,44 +199,24 @@ impl MapRange {
 
         let offset = usize::from_str_radix(parts.next().unwrap_or("0"), 16).unwrap();
 
-        #[cfg(feature = "detail")]
-        {
-            let dev = parts.next().unwrap_or("0:0").split_once(":").unwrap();
-            let dev_0 = u8::from_str_radix(dev.0, 16).unwrap();
-            let dev_1 = u8::from_str_radix(dev.1, 10).unwrap();
+        let dev = parts.next().unwrap_or("0:0").split_once(":").unwrap();
+        let dev_0 = u8::from_str_radix(dev.0, 16).unwrap();
+        let dev_1 = u8::from_str_radix(dev.1, 10).unwrap();
 
-            let inode = parts.next().unwrap_or("0").parse::<u64>().map_err(|e|ProcessError::MapParseConvertError(e.to_string()))?;
-        }
-
-        #[cfg(not(feature = "detail"))]
-        {
-            parts.next();
-            parts.next();
-        }
+        let inode = parts.next().unwrap_or("0").parse::<u32>().map_err(|e|ProcessError::MapParseConvertError(e.to_string()))?;
 
         let path_raw = parts.next().unwrap_or("").trim_start().trim_end();
 
-        #[cfg(feature = "detail")]
-        {
+        let memory_type = MemoryType::new(Some(path_raw), perms, offset as i64, last_is_cd);
         Ok( MapRange{
             address: (addr_s, addr_e),
             perms: perms,
             offset: offset,
             dev: (dev_0, dev_1),
             inode: inode,
-            pathname: MemeryType::from_str(if path_raw.len() == 0 {None} else {Some(path_raw)})
+            pathname: path_raw.to_string(),
+            memory_type: memory_type
         } )
-        }
-        
-        #[cfg(not(feature = "detail"))]
-        {
-        Ok( MapRange{
-            address: (addr_s, addr_e),
-            perms: perms,
-            offset: offset,
-            pathname: MemeryType::from_str(if path_raw.len() == 0 {None} else {Some(path_raw)})
-        } )
-        }
     }
 
     #[inline]
@@ -157,10 +250,15 @@ impl Process {
             let maps_file = std::fs::File::open(format!("/proc/{}/maps", self.pid)).map_err(|e|ProcessError::MapsOpenError(e.to_string()))?;
 
             let reader = BufReader::new(maps_file);
+
+            let mut last_is_cd = false;
             for line in reader.lines() {
                 match line {
                     Err(e) => return Err(ProcessError::IoError(e.to_string())),
-                    Ok(s) => self.maps.push(MapRange::new(&s)?),
+                    Ok(s) => {
+                        self.maps.push(MapRange::new(&s, last_is_cd)?);
+                        last_is_cd = self.maps.last().unwrap().memory_type == MemoryType::Cd;
+                    }
                 }
             }
             
